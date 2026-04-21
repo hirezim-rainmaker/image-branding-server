@@ -34,20 +34,26 @@ app.post('/brand', upload.fields([
     if (!req.files['raw']) {
       return res.status(400).json({ error: 'Raw image is required.' });
     }
-    if (!req.body.reference_url) {
-      return res.status(400).json({ error: 'reference_url is required.' });
+
+    // Read reference URL from query string
+    const referenceUrl = req.query.reference_url;
+    if (!referenceUrl) {
+      return res.status(400).json({ error: 'reference_url query parameter is required.' });
     }
 
+    // Resize raw image first to reduce memory
     const resizedRaw = await sharp(req.files['raw'][0].buffer)
       .resize(OUTPUT_SIZE, OUTPUT_SIZE, { fit: 'cover', position: 'centre' })
       .jpeg({ quality: 85 })
       .toBuffer();
 
-    const referenceBuffer = await downloadImage(req.body.reference_url);
+    // Download reference image from URL
+    const referenceBuffer = await downloadImage(referenceUrl);
     const refMeta = await sharp(referenceBuffer).metadata();
     const refW = refMeta.width;
     const refH = refMeta.height;
 
+    // Extract logo strip from top 15%
     const logoStripH = Math.floor(refH * 0.15);
     const logoStrip = await sharp(referenceBuffer)
       .extract({ left: 0, top: 0, width: refW, height: logoStripH })
@@ -55,6 +61,7 @@ app.post('/brand', upload.fields([
       .png()
       .toBuffer();
 
+    // Extract banner from bottom 35%
     const bannerTopInRef = Math.floor(refH * 0.65);
     const bannerH = refH - bannerTopInRef;
     const bannerStrip = await sharp(referenceBuffer)
@@ -63,6 +70,7 @@ app.post('/brand', upload.fields([
       .png()
       .toBuffer();
 
+    // Composite
     const bannerTopPosition = Math.floor(OUTPUT_SIZE * 0.65);
     const branded = await sharp(resizedRaw)
       .composite([
@@ -92,3 +100,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Image branding server running on port ${PORT}`);
 });
+
