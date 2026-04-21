@@ -1,23 +1,39 @@
 const express = require('express');
 const sharp = require('sharp');
 const multer = require('multer');
+const https = require('https');
+const http = require('http');
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
+function downloadImage(url) {
+  return new Promise((resolve, reject) => {
+    const client = url.startsWith('https') ? https : http;
+    client.get(url, (res) => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+      res.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
 const OUTPUT_SIZE = 1080;
 
 app.post('/brand', upload.fields([
-  { name: 'raw', maxCount: 1 },
-  { name: 'reference', maxCount: 1 }
+  { name: 'raw', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    if (!req.files['raw'] || !req.files['reference']) {
-      return res.status(400).json({ error: 'Both raw and reference images are required.' });
+    if (!req.files['raw']) {
+      return res.status(400).json({ error: 'Raw image is required.' });
+    }
+    if (!req.body.reference_url) {
+      return res.status(400).json({ error: 'reference_url is required.' });
     }
 
     const rawBuffer = req.files['raw'][0].buffer;
-    const referenceBuffer = req.files['reference'][0].buffer;
+    const referenceBuffer = await downloadImage(req.body.reference_url);
 
     const refMeta = await sharp(referenceBuffer).metadata();
     const refW = refMeta.width;
