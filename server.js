@@ -5,12 +5,20 @@ const https = require('https');
 const http = require('http');
 
 const app = express();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }
+});
+
+const OUTPUT_SIZE = 1080;
 
 function downloadImage(url) {
   return new Promise((resolve, reject) => {
     const client = url.startsWith('https') ? https : http;
     client.get(url, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        return downloadImage(res.headers.location).then(resolve).catch(reject);
+      }
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => resolve(Buffer.concat(chunks)));
@@ -18,8 +26,6 @@ function downloadImage(url) {
     }).on('error', reject);
   });
 }
-
-const OUTPUT_SIZE = 1080;
 
 app.post('/brand', upload.fields([
   { name: 'raw', maxCount: 1 }
@@ -32,9 +38,12 @@ app.post('/brand', upload.fields([
       return res.status(400).json({ error: 'reference_url is required.' });
     }
 
-    const rawBuffer = req.files['raw'][0].buffer;
-    const referenceBuffer = await downloadImage(req.body.reference_url);
+    const resizedRaw = await sharp(req.files['raw'][0].buffer)
+      .resize(OUTPUT_SIZE, OUTPUT_SIZE, { fit: 'cover', position: 'centre' })
+      .jpeg({ quality: 85 })
+      .toBuffer();
 
+    const referenceBuffer = await downloadImage(req.body.reference_url);
     const refMeta = await sharp(referenceBuffer).metadata();
     const refW = refMeta.width;
     const refH = refMeta.height;
@@ -43,6 +52,7 @@ app.post('/brand', upload.fields([
     const logoStrip = await sharp(referenceBuffer)
       .extract({ left: 0, top: 0, width: refW, height: logoStripH })
       .resize(OUTPUT_SIZE, Math.floor(OUTPUT_SIZE * 0.15), { fit: 'fill' })
+      .png()
       .toBuffer();
 
     const bannerTopInRef = Math.floor(refH * 0.65);
@@ -50,26 +60,22 @@ app.post('/brand', upload.fields([
     const bannerStrip = await sharp(referenceBuffer)
       .extract({ left: 0, top: bannerTopInRef, width: refW, height: bannerH })
       .resize(OUTPUT_SIZE, Math.floor(OUTPUT_SIZE * 0.35), { fit: 'fill' })
-      .toBuffer();
-
-    const resizedRaw = await sharp(rawBuffer)
-      .resize(OUTPUT_SIZE, OUTPUT_SIZE, { fit: 'cover', position: 'centre' })
+      .png()
       .toBuffer();
 
     const bannerTopPosition = Math.floor(OUTPUT_SIZE * 0.65);
-
     const branded = await sharp(resizedRaw)
       .composite([
         { input: bannerStrip, top: bannerTopPosition, left: 0 },
         { input: logoStrip, top: 0, left: 0 }
       ])
-      .png()
+      .jpeg({ quality: 90 })
       .toBuffer();
 
     res.json({
       success: true,
       image_base64: branded.toString('base64'),
-      media_type: 'image/png'
+      media_type: 'image/jpeg'
     });
 
   } catch (error) {
